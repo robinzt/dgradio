@@ -1,9 +1,6 @@
 package com.skywing.dgradio.model;
 
 import com.google.common.collect.EvictingQueue;
-import com.skywing.dgradio.job.AbstractRadioJob;
-import com.skywing.dgradio.job.RefreshMediaStreamJob;
-import com.skywing.dgradio.job.RefreshMediaUrlJob;
 import io.lindstrom.m3u8.model.MediaPlaylist;
 import io.lindstrom.m3u8.model.MediaSegment;
 import io.lindstrom.m3u8.parser.MediaPlaylistParser;
@@ -11,17 +8,18 @@ import io.lindstrom.m3u8.parser.ParsingMode;
 import io.lindstrom.m3u8.parser.PlaylistParserException;
 import io.netty.handler.codec.http.QueryStringDecoder;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpClientOptions;
-import io.vertx.core.http.HttpMethod;
-import io.vertx.ext.auth.impl.http.SimpleHttpClient;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 import lombok.Data;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
-import org.quartz.*;
 
 import java.net.URL;
-import java.util.Date;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -32,6 +30,7 @@ public class RadioStation {
 
     private static final Pattern CURR_STREAM_PATTERN = Pattern.compile("curr_stream\\s*=\\s*\"(.*)\";");
 
+    private static final String USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36";
     @NonNull
     private String name;
 
@@ -42,10 +41,13 @@ public class RadioStation {
     private int queueSize;
 
     @NonNull
-    private Scheduler quartz;
-
-    @NonNull
     private Vertx vertx;
+
+    private ScheduledThreadPoolExecutor scheduledExecutor;
+
+    private RefreshMediaUrlRunner refreshMediaUrlRunner;
+
+    private RefreshMediaStreamRunner refreshMediaStreamRunner;
 
     private String mediaUrl;
 
@@ -55,36 +57,39 @@ public class RadioStation {
 
     private int targetDuration;
 
-    private EvictingQueue<WrapMediaSegment> fifoQueue;
+    private Collection<WrapMediaSegment> fifoQueue;
 
-    private SimpleHttpClient httpClient;
+    private WebClient webClient;
 
     private MediaPlaylistParser parser = new MediaPlaylistParser(ParsingMode.LENIENT);
 
     public synchronized void startMe() {
-        httpClient = new SimpleHttpClient(vertx,
-                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36",
-                new HttpClientOptions());
-        fifoQueue = EvictingQueue.create(queueSize);
-        RefreshMediaUrlJob mediaUrlJob = new RefreshMediaUrlJob(name);
-        addJob(mediaUrlJob);
-        RefreshMediaStreamJob mediaStreamJob = new RefreshMediaStreamJob(name);
-        addJob(mediaStreamJob);
+        WebClientOptions options = new WebClientOptions()
+                .setUserAgent(USER_AGENT)
+                .setConnectTimeout(2000);
+        webClient = WebClient.create(vertx, options);
+        fifoQueue = Collections.synchronizedCollection(EvictingQueue.create(queueSize));
 
-        scheduleJob(mediaUrlJob, 0);
+        scheduledExecutor = new ScheduledThreadPoolExecutor(2);
+        refreshMediaUrlRunner = new RefreshMediaUrlRunner();
+        refreshMediaStreamRunner = new RefreshMediaStreamRunner();
+
+        scheduledExecutor.submit(refreshMediaUrlRunner);
     }
 
     public synchronized void stopMe() {
-        RefreshMediaUrlJob mediaUrlJob = new RefreshMediaUrlJob(name);
-        removeJob(mediaUrlJob);
-        RefreshMediaStreamJob mediaStreamJob = new RefreshMediaStreamJob(name);
-        removeJob(mediaStreamJob);
+        scheduledExecutor.shutdown();
+        try {
+            scheduledExecutor.awaitTermination(3, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            //do nothing
+        }
     }
 
     public void refreshMediaUrl() {
-        httpClient.fetch(HttpMethod.GET, webUrl, null, null)
+        webClient.getAbs(webUrl).timeout(3000).send()
                 .onSuccess(event -> {
-                    log.info("{} Success get MediaUrl from {}", name, webUrl);
+                    log.info("{} get MediaUrl success from {}", name, webUrl);
                     String html = event.body().toString();
                     Matcher matcher = CURR_STREAM_PATTERN.matcher(html);
                     if (matcher.find()) {
@@ -102,7 +107,7 @@ public class RadioStation {
                             urlStr = String.format("%s://%s", protocol, urlStr);
                         }
                         mediaUrl = urlStr;
-                        log.info("{} Set mediaUrl={}", name, mediaUrl);
+                        log.info("{} set MediaUrl={}", name, mediaUrl);
 
                         int ttl = 1200;
                         long t = System.currentTimeMillis() / 1000;
@@ -116,29 +121,28 @@ public class RadioStation {
                             log.error("{} compute delay failed: {}", name, e.toString(), e);
                         }
 
-                        RefreshMediaUrlJob mediaUrlJob = new RefreshMediaUrlJob(name);
                         int seconds = (int) (t + ttl - (System.currentTimeMillis() / 1000) - 120);
                         if (seconds < 0) seconds = 0;
                         log.info("{} ttl={} t={} seconds={}", name, ttl, t, seconds);
-                        scheduleJob(mediaUrlJob, seconds);
+                        scheduledExecutor.schedule(refreshMediaUrlRunner, seconds, TimeUnit.SECONDS);
 
-                        RefreshMediaStreamJob mediaStreamJob = new RefreshMediaStreamJob(name);
-                        scheduleJob(mediaStreamJob, 0);
+                        scheduledExecutor.submit(refreshMediaStreamRunner);
                     }
                 })
             .onFailure(event -> {
-                log.warn("{} Failed get MediaUrl from {} with {}", name, webUrl, event.toString());
+                log.warn("{} get MediaUrl failed from {} with {}", name, webUrl, event.toString());
+                // remove refresh media stream runner
+                scheduledExecutor.remove(refreshMediaStreamRunner);
                 // retry 3 seconds
-                RefreshMediaUrlJob mediaUrlJob = new RefreshMediaUrlJob(name);
-                scheduleJob(mediaUrlJob, 3);
+                scheduledExecutor.schedule(refreshMediaUrlRunner, 3, TimeUnit.SECONDS);
             });
     }
 
     public void refreshMediaStream() {
-        httpClient.fetch(HttpMethod.GET, mediaUrl, null, null)
+        webClient.getAbs(mediaUrl).timeout(3000).send()
                 .onSuccess(event -> {
                     if (log.isDebugEnabled()) {
-                        log.debug("{} Success get MediaStream from {}", name, mediaUrl);
+                        log.debug("{} get MediaStream success from {}", name, mediaUrl);
                     }
                     String mediaUrlPrefix = mediaUrl.substring(0, mediaUrl.lastIndexOf('/')+1);
                     MediaPlaylist playlist = null;
@@ -147,8 +151,7 @@ public class RadioStation {
                     } catch (PlaylistParserException e) {
                         log.error("{} Failed parse m3u8 {}", name, e.toString(), e);
                         // retry 3 seconds
-                        RefreshMediaStreamJob mediaStreamJob = new RefreshMediaStreamJob(name);
-                        scheduleJob(mediaStreamJob, 3);
+                        scheduledExecutor.schedule(refreshMediaStreamRunner, 1, TimeUnit.SECONDS);
                         return;
                     }
                     playlist.version().ifPresent(ver -> version=ver);
@@ -162,14 +165,16 @@ public class RadioStation {
                     mediaSequence = playlist.mediaSequence();
 
                     int seconds = Math.round(playlist.mediaSegments().size() * targetDuration * 0.5f);
-                    RefreshMediaStreamJob mediaStreamJob = new RefreshMediaStreamJob(name);
-                    scheduleJob(mediaStreamJob, seconds);
+                    if (seconds >= 5 || seconds <= 0) {
+                        log.warn("{} error refreshMediaStreamRunner seconds={}", name, seconds);
+                        seconds = 3;
+                    }
+                    scheduledExecutor.schedule(refreshMediaStreamRunner, seconds, TimeUnit.SECONDS);
                 })
                 .onFailure(event -> {
-                    log.warn("{} Failed get MediaStream from {} with {}", name, mediaUrl, event.toString());
-                    // retry 3 seconds
-                    RefreshMediaStreamJob mediaStreamJob = new RefreshMediaStreamJob(name);
-                    scheduleJob(mediaStreamJob, 3);
+                    log.warn("{} get MediaStream failed from {} with {}", name, mediaUrl, event.toString());
+                    // schedule to refresh media url runner
+                    scheduledExecutor.submit(refreshMediaUrlRunner);
                 });
     }
 
@@ -184,47 +189,18 @@ public class RadioStation {
         return parser.writePlaylistAsString(mediaPlaylist);
     }
 
-    private <T extends AbstractRadioJob> void scheduleJob(T job, int seconds) {
-        Trigger trigger = TriggerBuilder.newTrigger()
-                .withIdentity(job.getTriggerKey())
-                .forJob(job.getJobKey())
-                .startAt(seconds==0 ? new Date() : DateBuilder.futureDate(seconds, DateBuilder.IntervalUnit.SECOND))
-                .withSchedule(SimpleScheduleBuilder.simpleSchedule().withRepeatCount(1).withIntervalInSeconds(seconds==0 ? 3 : seconds))
-//                .withSchedule(seconds != 0 ? SimpleScheduleBuilder.repeatSecondlyForever(seconds) : SimpleScheduleBuilder.simpleSchedule())
-                .build();
-        try {
-            Date date = quartz.rescheduleJob(job.getTriggerKey(), trigger);
-            if (date == null) {
-                date = quartz.scheduleJob(trigger);
-            }
-            if (RefreshMediaUrlJob.REFRESH_MEDIA_URL.equals(job.getGroup()) || log.isDebugEnabled()) {
-                log.info("scheduleJob {} success: interval {} seconds, next {}", job, seconds, date);
-            }
-        } catch (SchedulerException e) {
-            log.error("scheduleJob {} failed: {}", job, e.toString(), e);
+
+    class RefreshMediaUrlRunner implements Runnable {
+        @Override
+        public void run() {
+            refreshMediaUrl();
         }
     }
 
-    private <T extends AbstractRadioJob> void addJob(T job) {
-        JobDetail jobDetail = JobBuilder.newJob().ofType(job.getClass())
-                .storeDurably()
-                .withIdentity(job.getJobKey())
-                .usingJobData(AbstractRadioJob.RADIO_NAME, job.getRadioName())
-                .build();
-        try {
-            quartz.addJob(jobDetail, true);
-            log.info("addJob {} success", job);
-        } catch (SchedulerException e) {
-            log.error("addJob {} failed: {}", job, e.toString(), e);
-        }
-    }
-
-    private <T extends AbstractRadioJob> void removeJob(T job) {
-        try {
-            boolean success = quartz.deleteJob(job.getJobKey());
-            log.info("deleteJob {} return {}", job, success);
-        } catch (SchedulerException e) {
-            //do nothing
+    class RefreshMediaStreamRunner implements Runnable {
+        @Override
+        public void run() {
+            refreshMediaStream();
         }
     }
 }

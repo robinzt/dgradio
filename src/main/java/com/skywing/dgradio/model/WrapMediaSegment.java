@@ -15,6 +15,7 @@ public class WrapMediaSegment {
         String uri = mediaSegment.uri();
         QueryStringDecoder decoder = new QueryStringDecoder(uri, true);
         liteUri = decoder.path();
+//        System.out.println("\""+liteUri+"\"" );
         this.mediaSegment = MediaSegment.builder().from(mediaSegment).uri(mediaUrlPrefix + uri).build();
     }
 
