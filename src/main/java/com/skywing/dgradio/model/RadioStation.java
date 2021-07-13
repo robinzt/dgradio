@@ -18,6 +18,7 @@ import java.net.URL;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
@@ -48,7 +49,11 @@ public class RadioStation {
 
     private RefreshMediaUrlRunner refreshMediaUrlRunner;
 
+    private ScheduledFuture<?> refreshMediaUrlRunnerFuture;
+
     private RefreshMediaStreamRunner refreshMediaStreamRunner;
+
+    private ScheduledFuture<?> refreshMediaStreamRunnerFuture;
 
     private String mediaUrl;
 
@@ -72,6 +77,7 @@ public class RadioStation {
         fifoQueue = Collections.synchronizedCollection(EvictingQueue.create(queueSize));
 
         scheduledExecutor = new ScheduledThreadPoolExecutor(2);
+        scheduledExecutor.setRemoveOnCancelPolicy(true);
         refreshMediaUrlRunner = new RefreshMediaUrlRunner();
         refreshMediaStreamRunner = new RefreshMediaStreamRunner();
 
@@ -125,28 +131,31 @@ public class RadioStation {
                         int seconds = (int) (t + ttl - (System.currentTimeMillis() / 1000) - 120);
                         if (seconds < 0) seconds = 0;
                         log.info("{} ttl={} t={} seconds={}", name, ttl, t, seconds);
-                        scheduledExecutor.schedule(refreshMediaUrlRunner, seconds, TimeUnit.SECONDS);
-
-                        scheduledExecutor.submit(refreshMediaStreamRunner);
+                        clearAllJobs();
+                        refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, seconds, TimeUnit.SECONDS);
+                        refreshMediaStreamRunnerFuture = scheduledExecutor.schedule(refreshMediaStreamRunner, 0, TimeUnit.NANOSECONDS);
                     } else {
                         log.warn("{} get MediaUrl failed from {} with NOT MATCH", name, webUrl);
                         clearAllJobs();
                         // retry 3 seconds
-                        scheduledExecutor.schedule(refreshMediaUrlRunner, 3, TimeUnit.SECONDS);
+                        refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, 3, TimeUnit.SECONDS);
                     }
                 })
             .onFailure(event -> {
                 log.warn("{} get MediaUrl failed from {} with {}", name, webUrl, event.toString());
                 clearAllJobs();
                 // retry 3 seconds
-                scheduledExecutor.schedule(refreshMediaUrlRunner, 3, TimeUnit.SECONDS);
+                refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, 3, TimeUnit.SECONDS);
             });
     }
 
     private void clearAllJobs() {
-        while (scheduledExecutor.remove(refreshMediaStreamRunner)) ;
-        while (scheduledExecutor.remove(refreshMediaUrlRunner)) ;
-        scheduledExecutor.purge();
+        if (refreshMediaUrlRunnerFuture != null) {
+            refreshMediaUrlRunnerFuture.cancel(false);
+        }
+        if (refreshMediaStreamRunnerFuture != null) {
+            refreshMediaStreamRunnerFuture.cancel(false);
+        }
     }
 
     public void refreshMediaStream() {
@@ -161,8 +170,8 @@ public class RadioStation {
                         playlist = parser.readPlaylist(event.body().toString());
                     } catch (PlaylistParserException e) {
                         log.error("{} Failed parse m3u8 {}", name, e.toString(), e);
-                        // retry 3 seconds
-                        scheduledExecutor.schedule(refreshMediaStreamRunner, 1, TimeUnit.SECONDS);
+                        // retry 1 seconds
+                        refreshMediaStreamRunnerFuture = scheduledExecutor.schedule(refreshMediaStreamRunner, 1, TimeUnit.SECONDS);
                         return;
                     }
                     playlist.version().ifPresent(ver -> version=ver);
@@ -180,13 +189,13 @@ public class RadioStation {
                         log.warn("{} error refreshMediaStreamRunner seconds={}", name, seconds);
                         seconds = 3;
                     }
-                    scheduledExecutor.schedule(refreshMediaStreamRunner, seconds, TimeUnit.SECONDS);
+                    refreshMediaStreamRunnerFuture = scheduledExecutor.schedule(refreshMediaStreamRunner, seconds, TimeUnit.SECONDS);
                 })
                 .onFailure(event -> {
                     log.warn("{} get MediaStream failed from {} with {}", name, mediaUrl, event.toString());
                     clearAllJobs();
                     // schedule to refresh media url runner
-                    scheduledExecutor.submit(refreshMediaUrlRunner);
+                    refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, 0, TimeUnit.NANOSECONDS);
                 });
     }
 
