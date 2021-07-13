@@ -130,23 +130,23 @@ public class RadioStation {
                         scheduledExecutor.submit(refreshMediaStreamRunner);
                     } else {
                         log.warn("{} get MediaUrl failed from {} with NOT MATCH", name, webUrl);
-                        // remove refresh media stream runner
-                        scheduledExecutor.remove(refreshMediaStreamRunner);
-                        scheduledExecutor.remove(refreshMediaUrlRunner);
-                        scheduledExecutor.purge();
+                        clearAllJobs();
                         // retry 3 seconds
                         scheduledExecutor.schedule(refreshMediaUrlRunner, 3, TimeUnit.SECONDS);
                     }
                 })
             .onFailure(event -> {
                 log.warn("{} get MediaUrl failed from {} with {}", name, webUrl, event.toString());
-                // remove refresh media stream runner
-                scheduledExecutor.remove(refreshMediaStreamRunner);
-                scheduledExecutor.remove(refreshMediaUrlRunner);
-                scheduledExecutor.purge();
+                clearAllJobs();
                 // retry 3 seconds
                 scheduledExecutor.schedule(refreshMediaUrlRunner, 3, TimeUnit.SECONDS);
             });
+    }
+
+    private void clearAllJobs() {
+        while (scheduledExecutor.remove(refreshMediaStreamRunner)) ;
+        while (scheduledExecutor.remove(refreshMediaUrlRunner)) ;
+        scheduledExecutor.purge();
     }
 
     public void refreshMediaStream() {
@@ -184,10 +184,7 @@ public class RadioStation {
                 })
                 .onFailure(event -> {
                     log.warn("{} get MediaStream failed from {} with {}", name, mediaUrl, event.toString());
-                    // remove refresh media stream runner
-                    scheduledExecutor.remove(refreshMediaStreamRunner);
-                    scheduledExecutor.remove(refreshMediaUrlRunner);
-                    scheduledExecutor.purge();
+                    clearAllJobs();
                     // schedule to refresh media url runner
                     scheduledExecutor.submit(refreshMediaUrlRunner);
                 });
