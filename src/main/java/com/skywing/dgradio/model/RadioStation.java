@@ -31,6 +31,7 @@ public class RadioStation {
     private static final Pattern CURR_STREAM_PATTERN = Pattern.compile("curr_stream\\s*=\\s*\"(.*)\";");
 
     private static final String USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36";
+    public static final int DEFAULT_TIMEOUT_MILLI = 3000;
     @NonNull
     private String name;
 
@@ -87,12 +88,12 @@ public class RadioStation {
     }
 
     public void refreshMediaUrl() {
-        webClient.getAbs(webUrl).timeout(3000).send()
+        webClient.getAbs(webUrl).timeout(DEFAULT_TIMEOUT_MILLI).send()
                 .onSuccess(event -> {
-                    log.info("{} get MediaUrl success from {}", name, webUrl);
                     String html = event.body().toString();
                     Matcher matcher = CURR_STREAM_PATTERN.matcher(html);
                     if (matcher.find()) {
+                        log.info("{} get MediaUrl success from {}", name, webUrl);
                         String urlStr = matcher.group(1);
                         String protocol = "http";
                         try {
@@ -127,19 +128,29 @@ public class RadioStation {
                         scheduledExecutor.schedule(refreshMediaUrlRunner, seconds, TimeUnit.SECONDS);
 
                         scheduledExecutor.submit(refreshMediaStreamRunner);
+                    } else {
+                        log.warn("{} get MediaUrl failed from {} with NOT MATCH", name, webUrl);
+                        // remove refresh media stream runner
+                        scheduledExecutor.remove(refreshMediaStreamRunner);
+                        scheduledExecutor.remove(refreshMediaUrlRunner);
+                        scheduledExecutor.purge();
+                        // retry 3 seconds
+                        scheduledExecutor.schedule(refreshMediaUrlRunner, 3, TimeUnit.SECONDS);
                     }
                 })
             .onFailure(event -> {
                 log.warn("{} get MediaUrl failed from {} with {}", name, webUrl, event.toString());
                 // remove refresh media stream runner
                 scheduledExecutor.remove(refreshMediaStreamRunner);
+                scheduledExecutor.remove(refreshMediaUrlRunner);
+                scheduledExecutor.purge();
                 // retry 3 seconds
                 scheduledExecutor.schedule(refreshMediaUrlRunner, 3, TimeUnit.SECONDS);
             });
     }
 
     public void refreshMediaStream() {
-        webClient.getAbs(mediaUrl).timeout(3000).send()
+        webClient.getAbs(mediaUrl).timeout(DEFAULT_TIMEOUT_MILLI).send()
                 .onSuccess(event -> {
                     if (log.isDebugEnabled()) {
                         log.debug("{} get MediaStream success from {}", name, mediaUrl);
@@ -173,6 +184,10 @@ public class RadioStation {
                 })
                 .onFailure(event -> {
                     log.warn("{} get MediaStream failed from {} with {}", name, mediaUrl, event.toString());
+                    // remove refresh media stream runner
+                    scheduledExecutor.remove(refreshMediaStreamRunner);
+                    scheduledExecutor.remove(refreshMediaUrlRunner);
+                    scheduledExecutor.purge();
                     // schedule to refresh media url runner
                     scheduledExecutor.submit(refreshMediaUrlRunner);
                 });
