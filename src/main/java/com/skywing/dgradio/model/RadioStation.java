@@ -169,9 +169,10 @@ public class RadioStation {
                     try {
                         playlist = parser.readPlaylist(event.body().toString());
                     } catch (PlaylistParserException e) {
-                        log.error("{} Failed parse m3u8 {}", name, e.toString(), e);
-                        // retry 1 seconds
-                        refreshMediaStreamRunnerFuture = scheduledExecutor.schedule(refreshMediaStreamRunner, 1, TimeUnit.SECONDS);
+                        log.error("{} Failed parse m3u8 from {}: {}", name, mediaUrl, e.toString());
+                        clearAllJobs();
+                        // schedule to refresh media url runner
+                        refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, 0, TimeUnit.NANOSECONDS);
                         return;
                     }
                     playlist.version().ifPresent(ver -> version=ver);
