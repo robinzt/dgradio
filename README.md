@@ -3,11 +3,11 @@
 东莞电台 在线转播 / DongGuan FM Radio Stations
 
 
-声动104 / FM 104.0 MHz, From: http://dgrtv.sun0769.com/index.php/online2/3 To: http://localhost:8080/dg/fm104.m3u8
+声动104 / FM 104.0 MHz, From: https://dgrtv.sun0769.com/index.php/online2/3 To: http://localhost:8080/dg/fm104.m3u8
 
-阳光1008 / FM 100.8 MHz, From: http://dgrtv.sun0769.com/index.php/online2/1 To: http://localhost:8080/dg/fm1008.m3u8
+阳光1008 / FM 100.8 MHz, From: https://dgrtv.sun0769.com/index.php/online2/1 To: http://localhost:8080/dg/fm1008.m3u8
 
-畅享1075 / FM 107.5 MHz, From: http://dgrtv.sun0769.com/index.php/online2/2 To: http://localhost:8080/dg/fm1075.m3u8
+畅享1075 / FM 107.5 MHz, From: https://dgrtv.sun0769.com/index.php/online2/2 To: http://localhost:8080/dg/fm1075.m3u8
 
 This project uses Quarkus, the Supersonic Subatomic Java Framework.
 

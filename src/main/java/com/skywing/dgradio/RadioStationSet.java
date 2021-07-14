@@ -30,11 +30,11 @@ public class RadioStationSet {
     @PostConstruct
     public void init() {
         stations.put(FM_104, new RadioStation(
-                FM_104, "http://dgrtv.sun0769.com/index.php/online2/3", 8, vertx));
+                FM_104, "https://dgrtv.sun0769.com/index.php/online2/3", 8, vertx));
         stations.put(FM_1008, new RadioStation(
-                FM_1008, "http://dgrtv.sun0769.com/index.php/online2/1", 8, vertx));
+                FM_1008, "https://dgrtv.sun0769.com/index.php/online2/1", 8, vertx));
         stations.put(FM_1075, new RadioStation(
-                FM_1075, "http://dgrtv.sun0769.com/index.php/online2/2", 8, vertx));
+                FM_1075, "https://dgrtv.sun0769.com/index.php/online2/2", 8, vertx));
 
         stations.values().forEach(RadioStation::startMe);
     }

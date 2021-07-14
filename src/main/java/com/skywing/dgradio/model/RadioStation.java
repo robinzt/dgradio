@@ -131,28 +131,31 @@ public class RadioStation {
                         int seconds = (int) (t + ttl - (System.currentTimeMillis() / 1000) - 120);
                         if (seconds < 0) seconds = 0;
                         log.info("{} ttl={} t={} seconds={}", name, ttl, t, seconds);
-                        clearAllJobs();
+                        stopRefreshMediaStreamRunner();
                         refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, seconds, TimeUnit.SECONDS);
                         refreshMediaStreamRunnerFuture = scheduledExecutor.schedule(refreshMediaStreamRunner, 0, TimeUnit.NANOSECONDS);
                     } else {
                         log.warn("{} get MediaUrl failed from {} with NOT MATCH", name, webUrl);
-                        clearAllJobs();
+                        stopRefreshMediaStreamRunner();
                         // retry 3 seconds
                         refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, 3, TimeUnit.SECONDS);
                     }
                 })
             .onFailure(event -> {
                 log.warn("{} get MediaUrl failed from {} with {}", name, webUrl, event.toString());
-                clearAllJobs();
+                stopRefreshMediaStreamRunner();
                 // retry 3 seconds
                 refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, 3, TimeUnit.SECONDS);
             });
     }
 
-    private void clearAllJobs() {
+    private void stopRefreshMediaUrlRunner() {
         if (refreshMediaUrlRunnerFuture != null) {
             refreshMediaUrlRunnerFuture.cancel(false);
         }
+    }
+
+    private void stopRefreshMediaStreamRunner() {
         if (refreshMediaStreamRunnerFuture != null) {
             refreshMediaStreamRunnerFuture.cancel(false);
         }
@@ -170,7 +173,7 @@ public class RadioStation {
                         playlist = parser.readPlaylist(event.body().toString());
                     } catch (PlaylistParserException e) {
                         log.error("{} Failed parse m3u8 from {}: {}", name, mediaUrl, e.toString());
-                        clearAllJobs();
+                        stopRefreshMediaUrlRunner();
                         // schedule to refresh media url runner
                         refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, 0, TimeUnit.NANOSECONDS);
                         return;
@@ -194,7 +197,7 @@ public class RadioStation {
                 })
                 .onFailure(event -> {
                     log.warn("{} get MediaStream failed from {} with {}", name, mediaUrl, event.toString());
-                    clearAllJobs();
+                    stopRefreshMediaUrlRunner();
                     // schedule to refresh media url runner
                     refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, 0, TimeUnit.NANOSECONDS);
                 });
