@@ -17,6 +17,7 @@ import lombok.extern.slf4j.Slf4j;
 import java.net.URL;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Date;
 import java.util.List;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
@@ -49,11 +50,11 @@ public class RadioStation {
 
     private RefreshMediaUrlRunner refreshMediaUrlRunner;
 
-    private ScheduledFuture<?> refreshMediaUrlRunnerFuture;
+    private volatile ScheduledFuture<?> refreshMediaUrlRunnerFuture;
 
     private RefreshMediaStreamRunner refreshMediaStreamRunner;
 
-    private ScheduledFuture<?> refreshMediaStreamRunnerFuture;
+    private volatile ScheduledFuture<?> refreshMediaStreamRunnerFuture;
 
     private String mediaUrl;
 
@@ -77,7 +78,7 @@ public class RadioStation {
         fifoQueue = Collections.synchronizedCollection(EvictingQueue.create(queueSize));
 
         scheduledExecutor = new ScheduledThreadPoolExecutor(2);
-//        scheduledExecutor.setRemoveOnCancelPolicy(true);
+        scheduledExecutor.setRemoveOnCancelPolicy(true);
         refreshMediaUrlRunner = new RefreshMediaUrlRunner();
         refreshMediaStreamRunner = new RefreshMediaStreamRunner();
 
@@ -94,7 +95,6 @@ public class RadioStation {
     }
 
     public void refreshMediaUrl() {
-        final ScheduledFuture<?> otherRunner = refreshMediaStreamRunnerFuture;
         webClient.getAbs(webUrl).timeout(DEFAULT_TIMEOUT_MILLI).send()
                 .onSuccess(event -> {
                     String html = event.body().toString();
@@ -131,12 +131,14 @@ public class RadioStation {
 
                         int seconds = (int) (t + ttl - (System.currentTimeMillis() / 1000) - 120);
                         if (seconds < 0) seconds = 0;
-                        log.info("{} ttl={} t={} seconds={}", name, ttl, t, seconds);
+                        log.info("{} ttl={}, t={}, seconds={}, next run={}", name, ttl, t, seconds, new Date(System.currentTimeMillis() + seconds*1000));
+                        final ScheduledFuture<?> otherRunner = refreshMediaStreamRunnerFuture;
                         stopRunner(otherRunner);
                         refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, seconds, TimeUnit.SECONDS);
                         refreshMediaStreamRunnerFuture = scheduledExecutor.schedule(refreshMediaStreamRunner, 0, TimeUnit.NANOSECONDS);
                     } else {
                         log.warn("{} get MediaUrl failed from {} with NOT MATCH", name, webUrl);
+                        final ScheduledFuture<?> otherRunner = refreshMediaStreamRunnerFuture;
                         stopRunner(otherRunner);
                         // retry 3 seconds
                         refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, 3, TimeUnit.SECONDS);
@@ -144,6 +146,7 @@ public class RadioStation {
                 })
             .onFailure(event -> {
                 log.warn("{} get MediaUrl failed from {} with {}", name, webUrl, event.toString());
+                final ScheduledFuture<?> otherRunner = refreshMediaStreamRunnerFuture;
                 stopRunner(otherRunner);
                 // retry 3 seconds
                 refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, 3, TimeUnit.SECONDS);
@@ -152,7 +155,7 @@ public class RadioStation {
 
     private void stopRunner(ScheduledFuture<?> future) {
         if (future != null) {
-            future.cancel(true);
+            future.cancel(false);
         }
     }
 
@@ -169,9 +172,16 @@ public class RadioStation {
                         playlist = parser.readPlaylist(event.body().toString());
                     } catch (PlaylistParserException e) {
                         log.error("{} Failed parse m3u8 from {}: {}", name, mediaUrl, e.toString());
-                        stopRunner(otherRunner);
-                        // schedule to refresh media url runner
-                        refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, 0, TimeUnit.NANOSECONDS);
+                        if (refreshMediaUrlRunnerFuture == otherRunner) {
+                            stopRunner(otherRunner);
+                            // schedule to refresh media url runner
+                            refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, 0, TimeUnit.NANOSECONDS);
+                            refreshMediaStreamRunnerFuture = null;
+                            log.info("{} explicit run refreshMediaUrlRunner", name);
+                        } else {
+                            refreshMediaStreamRunnerFuture = null;
+                            log.info("{} skip run refreshMediaUrlRunner because future changed", name);
+                        }
                         return;
                     }
                     playlist.version().ifPresent(ver -> version=ver);
@@ -193,9 +203,16 @@ public class RadioStation {
                 })
                 .onFailure(event -> {
                     log.warn("{} get MediaStream failed from {} with {}", name, mediaUrl, event.toString());
-                    stopRunner(otherRunner);
-                    // schedule to refresh media url runner
-                    refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, 0, TimeUnit.NANOSECONDS);
+                    if (refreshMediaUrlRunnerFuture == otherRunner) {
+                        stopRunner(otherRunner);
+                        // schedule to refresh media url runner
+                        refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, 0, TimeUnit.NANOSECONDS);
+                        refreshMediaStreamRunnerFuture = null;
+                        log.info("{} explicit run refreshMediaUrlRunner", name);
+                    } else {
+                        refreshMediaStreamRunnerFuture = null;
+                        log.info("{} skip run refreshMediaUrlRunner because future changed", name);
+                    }
                 });
     }
 
