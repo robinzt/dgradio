@@ -135,6 +135,7 @@ public class RadioStation {
                         final ScheduledFuture<?> otherRunner = refreshMediaStreamRunnerFuture;
                         stopRunner(otherRunner);
                         refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, seconds, TimeUnit.SECONDS);
+                        refreshMediaStreamRunnerFuture = null;
                         refreshMediaStreamRunnerFuture = scheduledExecutor.schedule(refreshMediaStreamRunner, 0, TimeUnit.NANOSECONDS);
                     } else {
                         log.warn("{} get MediaUrl failed from {} with NOT MATCH", name, webUrl);
@@ -160,6 +161,7 @@ public class RadioStation {
     }
 
     public void refreshMediaStream() {
+        final ScheduledFuture<?> prevRunner = refreshMediaStreamRunnerFuture;
         final ScheduledFuture<?> otherRunner = refreshMediaUrlRunnerFuture;
         webClient.getAbs(mediaUrl).timeout(DEFAULT_TIMEOUT_MILLI).send()
                 .onSuccess(event -> {
@@ -199,7 +201,11 @@ public class RadioStation {
                         log.warn("{} error refreshMediaStreamRunner seconds={}", name, seconds);
                         seconds = 3;
                     }
-                    refreshMediaStreamRunnerFuture = scheduledExecutor.schedule(refreshMediaStreamRunner, seconds, TimeUnit.SECONDS);
+                    if (prevRunner == null || refreshMediaStreamRunnerFuture == prevRunner) {
+                        refreshMediaStreamRunnerFuture = scheduledExecutor.schedule(refreshMediaStreamRunner, seconds, TimeUnit.SECONDS);
+                    } else {
+                        log.info("{} skip run refreshMediaStreamRunner because future changed", name);
+                    }
                 })
                 .onFailure(event -> {
                     log.warn("{} get MediaStream failed from {} with {}", name, mediaUrl, event.toString());
