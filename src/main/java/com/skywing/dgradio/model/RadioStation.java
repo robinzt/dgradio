@@ -34,6 +34,8 @@ public class RadioStation {
 
     private static final String USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36";
     public static final int DEFAULT_TIMEOUT_MILLI = 3000;
+    public static final String REFRESH_MEDIA_URL = "RefreshMediaUrl";
+    public static final String REFRESH_MEDIA_STREAM = "RefreshMediaStream";
     @NonNull
     private String name;
 
@@ -86,6 +88,7 @@ public class RadioStation {
     }
 
     public synchronized void stopMe() {
+        log.info("{} stopMe", name);
         scheduledExecutor.shutdown();
         try {
             scheduledExecutor.awaitTermination(3, TimeUnit.SECONDS);
@@ -97,6 +100,7 @@ public class RadioStation {
     public void refreshMediaUrl() {
         webClient.getAbs(webUrl).timeout(DEFAULT_TIMEOUT_MILLI).send()
                 .onSuccess(event -> {
+                    log.info("{} GET {} onSuccess", name, webUrl);
                     String html = event.body().toString();
                     Matcher matcher = CURR_STREAM_PATTERN.matcher(html);
                     if (matcher.find()) {
@@ -133,14 +137,15 @@ public class RadioStation {
                         if (seconds < 0) seconds = 0;
                         log.info("{} ttl={}, t={}, seconds={}, next run={}", name, ttl, t, seconds, new Date(System.currentTimeMillis() + seconds*1000));
                         final ScheduledFuture<?> otherRunner = refreshMediaStreamRunnerFuture;
-                        stopRunner(otherRunner);
-                        refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, seconds, TimeUnit.SECONDS);
+                        stopRunner(otherRunner, REFRESH_MEDIA_STREAM);
                         refreshMediaStreamRunnerFuture = null;
-                        refreshMediaStreamRunnerFuture = scheduledExecutor.schedule(refreshMediaStreamRunner, 0, TimeUnit.NANOSECONDS);
+                        refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, seconds, TimeUnit.SECONDS);
+                        refreshMediaStreamRunnerFuture = scheduledExecutor.schedule(refreshMediaStreamRunner, 10, TimeUnit.MILLISECONDS);
                     } else {
                         log.warn("{} get MediaUrl failed from {} with NOT MATCH", name, webUrl);
                         final ScheduledFuture<?> otherRunner = refreshMediaStreamRunnerFuture;
-                        stopRunner(otherRunner);
+                        stopRunner(otherRunner, REFRESH_MEDIA_STREAM);
+                        refreshMediaStreamRunnerFuture = null;
                         // retry 3 seconds
                         refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, 3, TimeUnit.SECONDS);
                     }
@@ -148,15 +153,17 @@ public class RadioStation {
             .onFailure(event -> {
                 log.warn("{} get MediaUrl failed from {} with {}", name, webUrl, event.toString());
                 final ScheduledFuture<?> otherRunner = refreshMediaStreamRunnerFuture;
-                stopRunner(otherRunner);
+                stopRunner(otherRunner, REFRESH_MEDIA_STREAM);
+                refreshMediaStreamRunnerFuture = null;
                 // retry 3 seconds
                 refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, 3, TimeUnit.SECONDS);
             });
     }
 
-    private void stopRunner(ScheduledFuture<?> future) {
+    private void stopRunner(ScheduledFuture<?> future, String jobName) {
         if (future != null) {
             future.cancel(false);
+            log.info("{} stopRunner {} {}", name, jobName, future);
         }
     }
 
@@ -175,10 +182,10 @@ public class RadioStation {
                     } catch (PlaylistParserException e) {
                         log.error("{} Failed parse m3u8 from {}: {}", name, mediaUrl, e.toString());
                         if (refreshMediaUrlRunnerFuture == otherRunner) {
-                            stopRunner(otherRunner);
-                            // schedule to refresh media url runner
-                            refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, 0, TimeUnit.NANOSECONDS);
+                            stopRunner(otherRunner, REFRESH_MEDIA_URL);
                             refreshMediaStreamRunnerFuture = null;
+                            // schedule to refresh media url runner
+                            refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, 10, TimeUnit.MILLISECONDS);
                             log.info("{} explicit run refreshMediaUrlRunner", name);
                         } else {
                             refreshMediaStreamRunnerFuture = null;
@@ -210,10 +217,10 @@ public class RadioStation {
                 .onFailure(event -> {
                     log.warn("{} get MediaStream failed from {} with {}", name, mediaUrl, event.toString());
                     if (refreshMediaUrlRunnerFuture == otherRunner) {
-                        stopRunner(otherRunner);
-                        // schedule to refresh media url runner
-                        refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, 0, TimeUnit.NANOSECONDS);
+                        stopRunner(otherRunner, REFRESH_MEDIA_URL);
                         refreshMediaStreamRunnerFuture = null;
+                        // schedule to refresh media url runner
+                        refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, 10, TimeUnit.MILLISECONDS);
                         log.info("{} explicit run refreshMediaUrlRunner", name);
                     } else {
                         refreshMediaStreamRunnerFuture = null;
