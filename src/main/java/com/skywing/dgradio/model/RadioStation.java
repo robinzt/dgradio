@@ -100,7 +100,7 @@ public class RadioStation {
     public void refreshMediaUrl() {
         webClient.getAbs(webUrl).timeout(DEFAULT_TIMEOUT_MILLI).send()
                 .onSuccess(event -> {
-                    log.info("{} GET {} onSuccess", name, webUrl);
+//                    log.info("{} GET {} onSuccess", name, webUrl);
                     String html = event.body().toString();
                     Matcher matcher = CURR_STREAM_PATTERN.matcher(html);
                     if (matcher.find()) {
@@ -139,15 +139,17 @@ public class RadioStation {
                         final ScheduledFuture<?> otherRunner = refreshMediaStreamRunnerFuture;
                         stopRunner(otherRunner, REFRESH_MEDIA_STREAM);
                         refreshMediaStreamRunnerFuture = null;
-                        refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, seconds, TimeUnit.SECONDS);
-                        refreshMediaStreamRunnerFuture = scheduledExecutor.schedule(refreshMediaStreamRunner, 10, TimeUnit.MILLISECONDS);
+                        refreshMediaUrlRunnerFuture = makeSureSchedule(refreshMediaUrlRunner, seconds, TimeUnit.SECONDS);
+                        refreshMediaStreamRunnerFuture = makeSureSchedule(refreshMediaStreamRunner, 10, TimeUnit.MILLISECONDS);
+                        log.info("{} schedule refreshMediaUrlRunner {}", name, refreshMediaUrlRunnerFuture);
                     } else {
                         log.warn("{} get MediaUrl failed from {} with NOT MATCH", name, webUrl);
                         final ScheduledFuture<?> otherRunner = refreshMediaStreamRunnerFuture;
                         stopRunner(otherRunner, REFRESH_MEDIA_STREAM);
                         refreshMediaStreamRunnerFuture = null;
                         // retry 3 seconds
-                        refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, 3, TimeUnit.SECONDS);
+                        refreshMediaUrlRunnerFuture = makeSureSchedule(refreshMediaUrlRunner, 3, TimeUnit.SECONDS);
+                        log.info("{} schedule refreshMediaUrlRunner {}", name, refreshMediaUrlRunnerFuture);
                     }
                 })
             .onFailure(event -> {
@@ -156,14 +158,27 @@ public class RadioStation {
                 stopRunner(otherRunner, REFRESH_MEDIA_STREAM);
                 refreshMediaStreamRunnerFuture = null;
                 // retry 3 seconds
-                refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, 3, TimeUnit.SECONDS);
+                refreshMediaUrlRunnerFuture = makeSureSchedule(refreshMediaUrlRunner, 3, TimeUnit.SECONDS);
+                log.info("{} schedule refreshMediaUrlRunner {}", name, refreshMediaUrlRunnerFuture);
             });
+    }
+
+    private ScheduledFuture<?> makeSureSchedule(Runnable runnable, int delay, TimeUnit unit) {
+        ScheduledFuture<?> future = null;
+        while (true) {
+            try {
+                future = scheduledExecutor.schedule(runnable, delay, unit);
+                return future;
+            } catch (Exception e) {
+                log.error("{} schedule() catch {}, retry it", name, e);
+            }
+        }
     }
 
     private void stopRunner(ScheduledFuture<?> future, String jobName) {
         if (future != null) {
-            future.cancel(false);
             log.info("{} stopRunner {} {}", name, jobName, future);
+            future.cancel(false);
         }
     }
 
@@ -185,7 +200,7 @@ public class RadioStation {
                             stopRunner(otherRunner, REFRESH_MEDIA_URL);
                             refreshMediaStreamRunnerFuture = null;
                             // schedule to refresh media url runner
-                            refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, 10, TimeUnit.MILLISECONDS);
+                            refreshMediaUrlRunnerFuture = makeSureSchedule(refreshMediaUrlRunner, 10, TimeUnit.MILLISECONDS);
                             log.info("{} explicit run refreshMediaUrlRunner", name);
                         } else {
                             refreshMediaStreamRunnerFuture = null;
@@ -209,7 +224,7 @@ public class RadioStation {
                         seconds = 3;
                     }
                     if (prevRunner == null || refreshMediaStreamRunnerFuture == prevRunner) {
-                        refreshMediaStreamRunnerFuture = scheduledExecutor.schedule(refreshMediaStreamRunner, seconds, TimeUnit.SECONDS);
+                        refreshMediaStreamRunnerFuture = makeSureSchedule(refreshMediaStreamRunner, seconds, TimeUnit.SECONDS);
                     } else {
                         log.info("{} skip run refreshMediaStreamRunner because future changed", name);
                     }
@@ -220,7 +235,7 @@ public class RadioStation {
                         stopRunner(otherRunner, REFRESH_MEDIA_URL);
                         refreshMediaStreamRunnerFuture = null;
                         // schedule to refresh media url runner
-                        refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, 10, TimeUnit.MILLISECONDS);
+                        refreshMediaUrlRunnerFuture = makeSureSchedule(refreshMediaUrlRunner, 10, TimeUnit.MILLISECONDS);
                         log.info("{} explicit run refreshMediaUrlRunner", name);
                     } else {
                         refreshMediaStreamRunnerFuture = null;
@@ -244,14 +259,24 @@ public class RadioStation {
     class RefreshMediaUrlRunner implements Runnable {
         @Override
         public void run() {
-            refreshMediaUrl();
+            try {
+                refreshMediaUrl();
+            } catch (Exception e) {
+                log.error("{} refreshMediaUrl() catch {}", name, e);
+                refreshMediaUrlRunnerFuture = makeSureSchedule(refreshMediaUrlRunner, 1, TimeUnit.SECONDS);
+            }
         }
     }
 
     class RefreshMediaStreamRunner implements Runnable {
         @Override
         public void run() {
-            refreshMediaStream();
+            try {
+                refreshMediaStream();
+            } catch (Exception e) {
+                log.error("{} refreshMediaStream() catch {}", name, e);
+                refreshMediaStreamRunnerFuture = makeSureSchedule(refreshMediaStreamRunner, 1, TimeUnit.SECONDS);
+            }
         }
     }
 }
