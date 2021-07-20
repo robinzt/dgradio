@@ -52,11 +52,11 @@ public class RadioStation {
 
     private RefreshMediaUrlRunner refreshMediaUrlRunner;
 
-    private volatile ScheduledFuture<?> refreshMediaUrlRunnerFuture;
+    private ScheduledFuture<?> refreshMediaUrlRunnerFuture;
 
     private RefreshMediaStreamRunner refreshMediaStreamRunner;
 
-    private volatile ScheduledFuture<?> refreshMediaStreamRunnerFuture;
+    private ScheduledFuture<?> refreshMediaStreamRunnerFuture;
 
     private String mediaUrl;
 
@@ -80,7 +80,7 @@ public class RadioStation {
         fifoQueue = Collections.synchronizedCollection(EvictingQueue.create(queueSize));
 
         scheduledExecutor = new ScheduledThreadPoolExecutor(2);
-        scheduledExecutor.setRemoveOnCancelPolicy(true);
+//        scheduledExecutor.setRemoveOnCancelPolicy(true);
         refreshMediaUrlRunner = new RefreshMediaUrlRunner();
         refreshMediaStreamRunner = new RefreshMediaStreamRunner();
 
@@ -126,8 +126,8 @@ public class RadioStation {
                         try {
                             URL url = new URL(mediaUrl);
                             QueryStringDecoder decoder = new QueryStringDecoder(url.getQuery(), false);
-                            ttl = Integer.valueOf(decoder.parameters().get("ttl").get(0));
-                            t = Long.valueOf(decoder.parameters().get("t").get(0));
+                            ttl = Integer.parseInt(decoder.parameters().get("ttl").get(0));
+                            t = Long.parseLong(decoder.parameters().get("t").get(0));
                         } catch (Exception e) {
                             //do nothing
                             log.error("{} compute delay failed: {}", name, e.toString(), e);
@@ -141,7 +141,7 @@ public class RadioStation {
                         refreshMediaStreamRunnerFuture = null;
                         refreshMediaUrlRunnerFuture = makeSureSchedule(refreshMediaUrlRunner, seconds, TimeUnit.SECONDS);
                         refreshMediaStreamRunnerFuture = makeSureSchedule(refreshMediaStreamRunner, 10, TimeUnit.MILLISECONDS);
-                        log.info("{} schedule refreshMediaUrlRunner {}", name, refreshMediaUrlRunnerFuture);
+                        log.info("{} schedule refreshMediaUrlRunner {}, delay={}", name, refreshMediaUrlRunnerFuture, refreshMediaUrlRunnerFuture.getDelay(TimeUnit.NANOSECONDS));
                     } else {
                         log.warn("{} get MediaUrl failed from {} with NOT MATCH", name, webUrl);
                         final ScheduledFuture<?> otherRunner = refreshMediaStreamRunnerFuture;
@@ -149,7 +149,7 @@ public class RadioStation {
                         refreshMediaStreamRunnerFuture = null;
                         // retry 3 seconds
                         refreshMediaUrlRunnerFuture = makeSureSchedule(refreshMediaUrlRunner, 3, TimeUnit.SECONDS);
-                        log.info("{} schedule refreshMediaUrlRunner {}", name, refreshMediaUrlRunnerFuture);
+                        log.info("{} schedule refreshMediaUrlRunner {}, delay={}", name, refreshMediaUrlRunnerFuture, refreshMediaUrlRunnerFuture.getDelay(TimeUnit.NANOSECONDS));
                     }
                 })
             .onFailure(event -> {
@@ -159,13 +159,13 @@ public class RadioStation {
                 refreshMediaStreamRunnerFuture = null;
                 // retry 3 seconds
                 refreshMediaUrlRunnerFuture = makeSureSchedule(refreshMediaUrlRunner, 3, TimeUnit.SECONDS);
-                log.info("{} schedule refreshMediaUrlRunner {}", name, refreshMediaUrlRunnerFuture);
+                log.info("{} schedule refreshMediaUrlRunner {}, delay={}", name, refreshMediaUrlRunnerFuture, refreshMediaUrlRunnerFuture.getDelay(TimeUnit.NANOSECONDS));
             });
     }
 
     private ScheduledFuture<?> makeSureSchedule(Runnable runnable, int delay, TimeUnit unit) {
         ScheduledFuture<?> future = null;
-        while (true) {
+        for(int i=0; i<3; i++) {
             try {
                 future = scheduledExecutor.schedule(runnable, delay, unit);
                 return future;
@@ -173,6 +173,7 @@ public class RadioStation {
                 log.error("{} schedule() catch {}, retry it", name, e);
             }
         }
+        throw new RuntimeException("schedule failed");
     }
 
     private void stopRunner(ScheduledFuture<?> future, String jobName) {
@@ -201,7 +202,7 @@ public class RadioStation {
                             refreshMediaStreamRunnerFuture = null;
                             // schedule to refresh media url runner
                             refreshMediaUrlRunnerFuture = makeSureSchedule(refreshMediaUrlRunner, 10, TimeUnit.MILLISECONDS);
-                            log.info("{} explicit run refreshMediaUrlRunner", name);
+                            log.info("{} explicit run refreshMediaUrlRunner {}, delay={}", name, refreshMediaUrlRunnerFuture, refreshMediaUrlRunnerFuture.getDelay(TimeUnit.NANOSECONDS));
                         } else {
                             refreshMediaStreamRunnerFuture = null;
                             log.info("{} skip run refreshMediaUrlRunner because future changed", name);
@@ -236,7 +237,7 @@ public class RadioStation {
                         refreshMediaStreamRunnerFuture = null;
                         // schedule to refresh media url runner
                         refreshMediaUrlRunnerFuture = makeSureSchedule(refreshMediaUrlRunner, 10, TimeUnit.MILLISECONDS);
-                        log.info("{} explicit run refreshMediaUrlRunner", name);
+                        log.info("{} explicit run refreshMediaUrlRunner {}, delay={}", name, refreshMediaUrlRunnerFuture, refreshMediaUrlRunnerFuture.getDelay(TimeUnit.NANOSECONDS));
                     } else {
                         refreshMediaStreamRunnerFuture = null;
                         log.info("{} skip run refreshMediaUrlRunner because future changed", name);
@@ -259,24 +260,14 @@ public class RadioStation {
     class RefreshMediaUrlRunner implements Runnable {
         @Override
         public void run() {
-            try {
-                refreshMediaUrl();
-            } catch (Exception e) {
-                log.error("{} refreshMediaUrl() catch {}", name, e);
-                refreshMediaUrlRunnerFuture = makeSureSchedule(refreshMediaUrlRunner, 1, TimeUnit.SECONDS);
-            }
+            refreshMediaUrl();
         }
     }
 
     class RefreshMediaStreamRunner implements Runnable {
         @Override
         public void run() {
-            try {
-                refreshMediaStream();
-            } catch (Exception e) {
-                log.error("{} refreshMediaStream() catch {}", name, e);
-                refreshMediaStreamRunnerFuture = makeSureSchedule(refreshMediaStreamRunner, 1, TimeUnit.SECONDS);
-            }
+            refreshMediaStream();
         }
     }
 }
