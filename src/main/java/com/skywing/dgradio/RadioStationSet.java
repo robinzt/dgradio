@@ -3,6 +3,8 @@ package com.skywing.dgradio;
 import com.skywing.dgradio.model.RadioStation;
 import io.quarkus.runtime.StartupEvent;
 import io.vertx.core.Vertx;
+import io.vertx.ext.web.client.WebClient;
+import io.vertx.ext.web.client.WebClientOptions;
 
 import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
@@ -11,6 +13,8 @@ import javax.enterprise.event.Observes;
 import javax.inject.Inject;
 import java.util.LinkedHashMap;
 import java.util.Map;
+
+import static com.skywing.dgradio.model.RadioStation.USER_AGENT;
 
 @ApplicationScoped
 public class RadioStationSet {
@@ -29,12 +33,17 @@ public class RadioStationSet {
 
     @PostConstruct
     public void init() {
+        WebClientOptions options = new WebClientOptions()
+                .setUserAgent(USER_AGENT)
+                .setConnectTimeout(2000);
+        WebClient webClient = WebClient.create(vertx, options);
+
         stations.put(FM_104, new RadioStation(
-                FM_104, "https://dgrtv.sun0769.com/index.php/online2/3", 8, vertx));
+                FM_104, "https://dgrtv.sun0769.com/index.php/online2/3", 8, webClient));
         stations.put(FM_1008, new RadioStation(
-                FM_1008, "https://dgrtv.sun0769.com/index.php/online2/1", 8, vertx));
+                FM_1008, "https://dgrtv.sun0769.com/index.php/online2/1", 8, webClient));
         stations.put(FM_1075, new RadioStation(
-                FM_1075, "https://dgrtv.sun0769.com/index.php/online2/2", 8, vertx));
+                FM_1075, "https://dgrtv.sun0769.com/index.php/online2/2", 8, webClient));
 
         stations.values().forEach(RadioStation::startMe);
     }

@@ -7,9 +7,7 @@ import io.lindstrom.m3u8.parser.MediaPlaylistParser;
 import io.lindstrom.m3u8.parser.ParsingMode;
 import io.lindstrom.m3u8.parser.PlaylistParserException;
 import io.netty.handler.codec.http.QueryStringDecoder;
-import io.vertx.core.Vertx;
 import io.vertx.ext.web.client.WebClient;
-import io.vertx.ext.web.client.WebClientOptions;
 import lombok.Data;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
@@ -21,6 +19,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -32,7 +31,7 @@ public class RadioStation {
 
     private static final Pattern CURR_STREAM_PATTERN = Pattern.compile("curr_stream\\s*=\\s*\"(.*)\";");
 
-    private static final String USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36";
+    public static final String USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36";
     public static final int DEFAULT_TIMEOUT_MILLI = 3000;
     public static final String REFRESH_MEDIA_URL = "RefreshMediaUrl";
     public static final String REFRESH_MEDIA_STREAM = "RefreshMediaStream";
@@ -46,7 +45,7 @@ public class RadioStation {
     private int queueSize;
 
     @NonNull
-    private Vertx vertx;
+    private WebClient webClient;
 
     private ScheduledThreadPoolExecutor scheduledExecutor;
 
@@ -68,15 +67,9 @@ public class RadioStation {
 
     private Collection<WrapMediaSegment> fifoQueue;
 
-    private WebClient webClient;
-
     private MediaPlaylistParser parser = new MediaPlaylistParser(ParsingMode.LENIENT);
 
     public synchronized void startMe() {
-        WebClientOptions options = new WebClientOptions()
-                .setUserAgent(USER_AGENT)
-                .setConnectTimeout(2000);
-        webClient = WebClient.create(vertx, options);
         fifoQueue = Collections.synchronizedCollection(EvictingQueue.create(queueSize));
 
         scheduledExecutor = new ScheduledThreadPoolExecutor(2);
@@ -98,9 +91,10 @@ public class RadioStation {
     }
 
     public void refreshMediaUrl() {
+        log.info("{} enter refreshMediaUrl", name);
+        final Semaphore semaphore = new Semaphore(0);
         webClient.getAbs(webUrl).timeout(DEFAULT_TIMEOUT_MILLI).send()
                 .onSuccess(event -> {
-//                    log.info("{} GET {} onSuccess", name, webUrl);
                     String html = event.body().toString();
                     Matcher matcher = CURR_STREAM_PATTERN.matcher(html);
                     if (matcher.find()) {
@@ -140,8 +134,7 @@ public class RadioStation {
                         stopRunner(otherRunner, REFRESH_MEDIA_STREAM);
                         refreshMediaStreamRunnerFuture = null;
                         refreshMediaUrlRunnerFuture = makeSureSchedule(refreshMediaUrlRunner, seconds, TimeUnit.SECONDS);
-                        refreshMediaStreamRunnerFuture = makeSureSchedule(refreshMediaStreamRunner, 10, TimeUnit.MILLISECONDS);
-                        log.info("{} schedule refreshMediaUrlRunner {}, delay={}", name, refreshMediaUrlRunnerFuture, refreshMediaUrlRunnerFuture.getDelay(TimeUnit.NANOSECONDS));
+                        refreshMediaStreamRunnerFuture = makeSureSchedule(refreshMediaStreamRunner, 1000, TimeUnit.MILLISECONDS);
                     } else {
                         log.warn("{} get MediaUrl failed from {} with NOT MATCH", name, webUrl);
                         final ScheduledFuture<?> otherRunner = refreshMediaStreamRunnerFuture;
@@ -149,8 +142,9 @@ public class RadioStation {
                         refreshMediaStreamRunnerFuture = null;
                         // retry 3 seconds
                         refreshMediaUrlRunnerFuture = makeSureSchedule(refreshMediaUrlRunner, 3, TimeUnit.SECONDS);
-                        log.info("{} schedule refreshMediaUrlRunner {}, delay={}", name, refreshMediaUrlRunnerFuture, refreshMediaUrlRunnerFuture.getDelay(TimeUnit.NANOSECONDS));
                     }
+                    log.info("{} schedule refreshMediaUrlRunner {}, delay={}", name, refreshMediaUrlRunnerFuture, refreshMediaUrlRunnerFuture.getDelay(TimeUnit.NANOSECONDS));
+                    semaphore.release();
                 })
             .onFailure(event -> {
                 log.warn("{} get MediaUrl failed from {} with {}", name, webUrl, event.toString());
@@ -160,7 +154,15 @@ public class RadioStation {
                 // retry 3 seconds
                 refreshMediaUrlRunnerFuture = makeSureSchedule(refreshMediaUrlRunner, 3, TimeUnit.SECONDS);
                 log.info("{} schedule refreshMediaUrlRunner {}, delay={}", name, refreshMediaUrlRunnerFuture, refreshMediaUrlRunnerFuture.getDelay(TimeUnit.NANOSECONDS));
+                semaphore.release();
             });
+
+        try {
+            semaphore.acquire();
+        } catch (InterruptedException e) {
+            log.warn("{} semaphore.acquire() {}", name, e);
+        }
+        log.info("{} exit refreshMediaUrl", name);
     }
 
     private ScheduledFuture<?> makeSureSchedule(Runnable runnable, int delay, TimeUnit unit) {
@@ -178,12 +180,13 @@ public class RadioStation {
 
     private void stopRunner(ScheduledFuture<?> future, String jobName) {
         if (future != null) {
-            log.info("{} stopRunner {} {}", name, jobName, future);
             future.cancel(false);
+            log.info("{} stopRunner {} {}", name, jobName, future);
         }
     }
 
     public void refreshMediaStream() {
+        final Semaphore semaphore = new Semaphore(0);
         final ScheduledFuture<?> prevRunner = refreshMediaStreamRunnerFuture;
         final ScheduledFuture<?> otherRunner = refreshMediaUrlRunnerFuture;
         webClient.getAbs(mediaUrl).timeout(DEFAULT_TIMEOUT_MILLI).send()
@@ -201,12 +204,13 @@ public class RadioStation {
                             stopRunner(otherRunner, REFRESH_MEDIA_URL);
                             refreshMediaStreamRunnerFuture = null;
                             // schedule to refresh media url runner
-                            refreshMediaUrlRunnerFuture = makeSureSchedule(refreshMediaUrlRunner, 10, TimeUnit.MILLISECONDS);
+                            refreshMediaUrlRunnerFuture = makeSureSchedule(refreshMediaUrlRunner, 1000, TimeUnit.MILLISECONDS);
                             log.info("{} explicit run refreshMediaUrlRunner {}, delay={}", name, refreshMediaUrlRunnerFuture, refreshMediaUrlRunnerFuture.getDelay(TimeUnit.NANOSECONDS));
                         } else {
                             refreshMediaStreamRunnerFuture = null;
                             log.info("{} skip run refreshMediaUrlRunner because future changed", name);
                         }
+                        semaphore.release();
                         return;
                     }
                     playlist.version().ifPresent(ver -> version=ver);
@@ -229,6 +233,7 @@ public class RadioStation {
                     } else {
                         log.info("{} skip run refreshMediaStreamRunner because future changed", name);
                     }
+                    semaphore.release();
                 })
                 .onFailure(event -> {
                     log.warn("{} get MediaStream failed from {} with {}", name, mediaUrl, event.toString());
@@ -236,13 +241,21 @@ public class RadioStation {
                         stopRunner(otherRunner, REFRESH_MEDIA_URL);
                         refreshMediaStreamRunnerFuture = null;
                         // schedule to refresh media url runner
-                        refreshMediaUrlRunnerFuture = makeSureSchedule(refreshMediaUrlRunner, 10, TimeUnit.MILLISECONDS);
+                        refreshMediaUrlRunnerFuture = makeSureSchedule(refreshMediaUrlRunner, 1000, TimeUnit.MILLISECONDS);
                         log.info("{} explicit run refreshMediaUrlRunner {}, delay={}", name, refreshMediaUrlRunnerFuture, refreshMediaUrlRunnerFuture.getDelay(TimeUnit.NANOSECONDS));
                     } else {
                         refreshMediaStreamRunnerFuture = null;
                         log.info("{} skip run refreshMediaUrlRunner because future changed", name);
                     }
+                    semaphore.release();
                 });
+
+        try {
+            semaphore.acquire();
+        } catch (InterruptedException e) {
+            log.warn("{} semaphore.acquire() {}", name, e);
+        }
+//        log.info("{} exit refreshMediaStream", name);
     }
 
     public String m3u8() {
