@@ -13,7 +13,7 @@ dependencies {
     implementation 'io.quarkus:quarkus-vertx'
     implementation 'io.quarkus:quarkus-resteasy'
     implementation 'io.quarkus:quarkus-arc'
-    implementation 'io.vertx:vertx-web-client'
+    implementation 'io.quarkus:quarkus-apache-httpclient'
     implementation 'io.lindstrom:m3u8-parser:0.19'
     implementation 'com.google.guava:guava:30.1.1-jre'
     compileOnly 'org.projectlombok:lombok:1.18.20'
