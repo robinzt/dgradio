@@ -52,11 +52,11 @@ public class RadioStation {
 
     private RefreshMediaUrlRunner refreshMediaUrlRunner;
 
-    private ScheduledFuture<?> refreshMediaUrlRunnerFuture;
+    private volatile ScheduledFuture<?> refreshMediaUrlRunnerFuture;
 
     private RefreshMediaStreamRunner refreshMediaStreamRunner;
 
-    private ScheduledFuture<?> refreshMediaStreamRunnerFuture;
+    private volatile ScheduledFuture<?> refreshMediaStreamRunnerFuture;
 
     private String mediaUrl;
 
@@ -76,7 +76,7 @@ public class RadioStation {
         fifoQueue = Collections.synchronizedCollection(EvictingQueue.create(queueSize));
 
         scheduledExecutor = new ScheduledThreadPoolExecutor(2);
-//        scheduledExecutor.setRemoveOnCancelPolicy(true);
+        scheduledExecutor.setRemoveOnCancelPolicy(true);
         refreshMediaUrlRunner = new RefreshMediaUrlRunner();
         refreshMediaStreamRunner = new RefreshMediaStreamRunner();
 
@@ -109,11 +109,10 @@ public class RadioStation {
 
         if (failedReason != null) {
             log.warn("{} get MediaUrl failed from {} with {}", name, webUrl, failedReason);
-            final ScheduledFuture<?> otherRunner = refreshMediaStreamRunnerFuture;
-            stopRunner(otherRunner, REFRESH_MEDIA_STREAM);
+            stopRunner(refreshMediaStreamRunnerFuture, REFRESH_MEDIA_STREAM);
             refreshMediaStreamRunnerFuture = null;
             // retry 3 seconds
-            refreshMediaUrlRunnerFuture = makeSureSchedule(refreshMediaUrlRunner, 3, TimeUnit.SECONDS);
+            refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, 3, TimeUnit.SECONDS);
             log.info("{} schedule refreshMediaUrlRunner {}", name, refreshMediaUrlRunnerFuture);
             return;
         }
@@ -149,25 +148,11 @@ public class RadioStation {
         int seconds = (int) (t + ttl - (System.currentTimeMillis() / 1000) - 120);
         if (seconds < 0) seconds = 0;
         log.info("{} ttl={}, t={}, seconds={}, next run={}", name, ttl, t, seconds, new Date(System.currentTimeMillis() + seconds*1000));
-        final ScheduledFuture<?> otherRunner = refreshMediaStreamRunnerFuture;
-        stopRunner(otherRunner, REFRESH_MEDIA_STREAM);
+        stopRunner(refreshMediaStreamRunnerFuture, REFRESH_MEDIA_STREAM);
         refreshMediaStreamRunnerFuture = null;
-        refreshMediaUrlRunnerFuture = makeSureSchedule(refreshMediaUrlRunner, seconds, TimeUnit.SECONDS);
-        refreshMediaStreamRunnerFuture = makeSureSchedule(refreshMediaStreamRunner, 1000, TimeUnit.MILLISECONDS);
+        refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, seconds, TimeUnit.SECONDS);
+        refreshMediaStreamRunnerFuture = scheduledExecutor.schedule(refreshMediaStreamRunner, 1000, TimeUnit.MILLISECONDS);
         log.info("{} schedule refreshMediaUrlRunner {}", name, refreshMediaUrlRunnerFuture);
-    }
-
-    private ScheduledFuture<?> makeSureSchedule(Runnable runnable, int delay, TimeUnit unit) {
-        ScheduledFuture<?> future = null;
-        for(int i=0; i<3; i++) {
-            try {
-                future = scheduledExecutor.schedule(runnable, delay, unit);
-                return future;
-            } catch (Exception e) {
-                log.error("{} schedule() catch {}, retry it", name, e);
-            }
-        }
-        throw new RuntimeException("schedule failed");
     }
 
     private void stopRunner(ScheduledFuture<?> future, String jobName) {
@@ -198,7 +183,7 @@ public class RadioStation {
                 stopRunner(otherRunner, REFRESH_MEDIA_URL);
                 refreshMediaStreamRunnerFuture = null;
                 // schedule to refresh media url runner
-                refreshMediaUrlRunnerFuture = makeSureSchedule(refreshMediaUrlRunner, 1000, TimeUnit.MILLISECONDS);
+                refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, 1000, TimeUnit.MILLISECONDS);
                 log.info("{} explicit run refreshMediaUrlRunner {}", name, refreshMediaUrlRunnerFuture);
             } else {
                 refreshMediaStreamRunnerFuture = null;
@@ -223,7 +208,7 @@ public class RadioStation {
             seconds = 3;
         }
         if (prevRunner == null || refreshMediaStreamRunnerFuture == prevRunner) {
-            refreshMediaStreamRunnerFuture = makeSureSchedule(refreshMediaStreamRunner, seconds, TimeUnit.SECONDS);
+            refreshMediaStreamRunnerFuture = scheduledExecutor.schedule(refreshMediaStreamRunner, seconds, TimeUnit.SECONDS);
         } else {
             log.info("{} skip run refreshMediaStreamRunner because future changed", name);
         }
