@@ -94,6 +94,8 @@ public class RadioStation {
     }
 
     public void refreshMediaUrl() {
+        final ScheduledFuture<?> prevRunner = refreshMediaUrlRunnerFuture;
+
         HttpUriRequest request = RequestBuilder.get(webUrl).build();
         Matcher matcher = null;
         String failedReason = null;
@@ -108,12 +110,16 @@ public class RadioStation {
         }
 
         if (failedReason != null) {
-            log.warn("{} get MediaUrl failed from {} with {}", name, webUrl, failedReason);
-            stopRunner(refreshMediaStreamRunnerFuture, REFRESH_MEDIA_STREAM);
-            refreshMediaStreamRunnerFuture = null;
-            // retry 3 seconds
-            refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, 3, TimeUnit.SECONDS);
-            log.info("{} schedule refreshMediaUrlRunner {}", name, refreshMediaUrlRunnerFuture);
+            if (prevRunner == refreshMediaUrlRunnerFuture) {
+                log.warn("{} get MediaUrl failed from {} with {}", name, webUrl, failedReason);
+                stopRunner(refreshMediaStreamRunnerFuture, REFRESH_MEDIA_STREAM);
+                refreshMediaStreamRunnerFuture = null;
+                // retry after 1 seconds
+                refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, 1, TimeUnit.SECONDS);
+                log.info("{} schedule refreshMediaUrlRunner {}", name, refreshMediaUrlRunnerFuture);
+            } else {
+                log.info("{} skip schedule refreshMediaUrlRunner because future changed", name);
+            }
             return;
         }
 
@@ -147,12 +153,16 @@ public class RadioStation {
 
         int seconds = (int) (t + ttl - (System.currentTimeMillis() / 1000) - 120);
         if (seconds < 0) seconds = 0;
-        log.info("{} ttl={}, t={}, seconds={}, next run={}", name, ttl, t, seconds, new Date(System.currentTimeMillis() + seconds*1000));
-        stopRunner(refreshMediaStreamRunnerFuture, REFRESH_MEDIA_STREAM);
-        refreshMediaStreamRunnerFuture = null;
-        refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, seconds, TimeUnit.SECONDS);
-        refreshMediaStreamRunnerFuture = scheduledExecutor.schedule(refreshMediaStreamRunner, 1000, TimeUnit.MILLISECONDS);
-        log.info("{} schedule refreshMediaUrlRunner {}", name, refreshMediaUrlRunnerFuture);
+        if (prevRunner == refreshMediaUrlRunnerFuture) {
+            log.info("{} ttl={}, t={}, seconds={}, next run={}", name, ttl, t, seconds, new Date(System.currentTimeMillis() + seconds*1000));
+            stopRunner(refreshMediaStreamRunnerFuture, REFRESH_MEDIA_STREAM);
+            refreshMediaStreamRunnerFuture = null;
+            refreshMediaUrlRunnerFuture = scheduledExecutor.schedule(refreshMediaUrlRunner, seconds, TimeUnit.SECONDS);
+            refreshMediaStreamRunnerFuture = scheduledExecutor.schedule(refreshMediaStreamRunner, 1000, TimeUnit.MILLISECONDS);
+            log.info("{} schedule refreshMediaUrlRunner {}", name, refreshMediaUrlRunnerFuture);
+        } else {
+            log.info("{} skip schedule refreshMediaUrlRunner because future changed", name);
+        }
     }
 
     private void stopRunner(ScheduledFuture<?> future, String jobName) {
@@ -187,7 +197,7 @@ public class RadioStation {
                 log.info("{} explicit run refreshMediaUrlRunner {}", name, refreshMediaUrlRunnerFuture);
             } else {
                 refreshMediaStreamRunnerFuture = null;
-                log.info("{} skip run refreshMediaUrlRunner because future changed", name);
+                log.info("{} skip schedule refreshMediaUrlRunner because future changed", name);
             }
             return;
         }
@@ -210,7 +220,7 @@ public class RadioStation {
         if (prevRunner == null || refreshMediaStreamRunnerFuture == prevRunner) {
             refreshMediaStreamRunnerFuture = scheduledExecutor.schedule(refreshMediaStreamRunner, seconds, TimeUnit.SECONDS);
         } else {
-            log.info("{} skip run refreshMediaStreamRunner because future changed", name);
+            log.info("{} skip schedule refreshMediaStreamRunner because future changed", name);
         }
     }
 
