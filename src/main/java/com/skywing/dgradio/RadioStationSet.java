@@ -4,7 +4,10 @@ import com.skywing.dgradio.model.RadioStation;
 import io.quarkus.runtime.StartupEvent;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.config.RequestConfig;
+import org.apache.http.conn.ssl.NoopHostnameVerifier;
+import org.apache.http.conn.ssl.TrustAllStrategy;
 import org.apache.http.impl.client.HttpClientBuilder;
+import org.apache.http.ssl.SSLContextBuilder;
 
 import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
@@ -29,11 +32,13 @@ public class RadioStationSet {
     }
 
     @PostConstruct
-    public void init() {
+    public void init() throws Exception {
         RequestConfig requestConfig = RequestConfig.custom().setConnectTimeout(DEFAULT_TIMEOUT_MILLI)
                 .setSocketTimeout(DEFAULT_TIMEOUT_MILLI).build();
         HttpClient httpClient = HttpClientBuilder.create().setDefaultRequestConfig(requestConfig)
-                .setUserAgent(USER_AGENT).build();
+                .setUserAgent(USER_AGENT)
+                .setSSLContext(new SSLContextBuilder().loadTrustMaterial(null, TrustAllStrategy.INSTANCE).build())
+                .setSSLHostnameVerifier(NoopHostnameVerifier.INSTANCE).build();
 
         stations.put(FM_104, new RadioStation(
                 FM_104, "https://dgrtv.sun0769.com/index.php/online2/3", 8, httpClient));
