@@ -30,23 +30,23 @@ import java.util.stream.Collectors;
 @Slf4j
 public class RadioStation {
 
-    private static final Pattern CURR_STREAM_PATTERN = Pattern.compile("curr_stream\\s*=\\s*\"(.*)\";");
+    private static final Pattern CURR_STREAM_PATTERN_HD = Pattern.compile("curr_stream_hd\\s*=\\s*\"(.*)\";");
+    private static final Pattern CURR_STREAM_PATTERN_SD = Pattern.compile("curr_stream_sd\\s*=\\s*\"(.*)\";");
 
     public static final String USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36";
     public static final int DEFAULT_TIMEOUT_MILLI = 3000;
     public static final String REFRESH_MEDIA_URL = "RefreshMediaUrl";
     public static final String REFRESH_MEDIA_STREAM = "RefreshMediaStream";
     @NonNull
-    private String name;
+    private final String name;
 
     @NonNull
-    private String webUrl;
+    private final String webUrl;
+
+    private final int queueSize;
 
     @NonNull
-    private int queueSize;
-
-    @NonNull
-    private HttpClient httpClient;
+    private final HttpClient httpClient;
 
     private ScheduledThreadPoolExecutor scheduledExecutor;
 
@@ -101,8 +101,11 @@ public class RadioStation {
         String failedReason = null;
         try {
             String html = httpClient.execute(request, responseHandler);
-            matcher = CURR_STREAM_PATTERN.matcher(html);
-            if (!matcher.find()) {
+            matcher = CURR_STREAM_PATTERN_HD.matcher(html);
+            if (!matcher.find() || matcher.group(1).isEmpty()) {
+                matcher = CURR_STREAM_PATTERN_SD.matcher(html);
+            }
+            if (!matcher.find() || matcher.group(1).isEmpty()) {
                 failedReason = "NOT MATCH";
             }
         } catch (Exception e) {
