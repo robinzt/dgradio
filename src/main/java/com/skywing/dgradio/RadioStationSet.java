@@ -41,11 +41,11 @@ public class RadioStationSet {
                 .setSSLHostnameVerifier(NoopHostnameVerifier.INSTANCE).build();
 
         stations.put(FM_104, new RadioStation(
-                FM_104, "https://dgrtv.sun0769.com/index.php/online2/3", 8, httpClient));
+                FM_104, "3", 8, httpClient));
         stations.put(FM_1008, new RadioStation(
-                FM_1008, "https://dgrtv.sun0769.com/index.php/online2/1", 8, httpClient));
+                FM_1008, "1", 8, httpClient));
         stations.put(FM_1075, new RadioStation(
-                FM_1075, "https://dgrtv.sun0769.com/index.php/online2/2", 8, httpClient));
+                FM_1075, "2", 8, httpClient));
 
         stations.values().forEach(RadioStation::startMe);
     }

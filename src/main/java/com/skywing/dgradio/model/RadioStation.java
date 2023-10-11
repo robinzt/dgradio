@@ -1,5 +1,6 @@
 package com.skywing.dgradio.model;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.google.common.collect.EvictingQueue;
 import io.lindstrom.m3u8.model.MediaPlaylist;
 import io.lindstrom.m3u8.model.MediaSegment;
@@ -22,26 +23,23 @@ import java.util.List;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Data
 @Slf4j
 public class RadioStation {
 
-    private static final Pattern CURR_STREAM_PATTERN_HD = Pattern.compile("curr_stream_hd\\s*=\\s*\"(.*)\";");
-    private static final Pattern CURR_STREAM_PATTERN_SD = Pattern.compile("curr_stream_sd\\s*=\\s*\"(.*)\";");
-
+    public static final String STREAM_URL = "https://dgrtv.sun0769.com/index.php/online2/stream/";
     public static final String USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36";
     public static final int DEFAULT_TIMEOUT_MILLI = 3000;
     public static final String REFRESH_MEDIA_URL = "RefreshMediaUrl";
     public static final String REFRESH_MEDIA_STREAM = "RefreshMediaStream";
+
     @NonNull
     private final String name;
 
     @NonNull
-    private final String webUrl;
+    private final String streamId;
 
     private final int queueSize;
 
@@ -96,17 +94,21 @@ public class RadioStation {
     public void refreshMediaUrl() {
         final ScheduledFuture<?> prevRunner = refreshMediaUrlRunnerFuture;
 
-        HttpUriRequest request = RequestBuilder.get(webUrl).build();
-        Matcher matcher = null;
         String failedReason = null;
+        String urlStr = null;
+        //curl 'https://dgrtv.sun0769.com/index.php/online2/stream/' -X POST -H 'Content-Type: application/x-www-form-urlencoded; charset=UTF-8' --data-raw 'id=3'
+        //{"code":1,"message":"获取成功","data":{"streamUrl":"\/\/stream.sun0769.com\/dgrtv1\/mp4:tv12\/index.m3u8?channel=1&t=1696993931&ttl=3600&key=7ad1b8491ef2d2d135390b5557cb8b5a","streamUrl_hd":"","streamUrl_sd":""}}
+        HttpUriRequest request = RequestBuilder.post(STREAM_URL)
+                .addHeader("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+                .addParameter("id", streamId)
+                .build();
         try {
-            String html = httpClient.execute(request, responseHandler);
-            matcher = CURR_STREAM_PATTERN_HD.matcher(html);
-            if (!matcher.find() || matcher.group(1).isEmpty()) {
-                matcher = CURR_STREAM_PATTERN_SD.matcher(html);
-            }
-            if (!matcher.find() || matcher.group(1).isEmpty()) {
-                failedReason = "NOT MATCH";
+            String json = httpClient.execute(request, responseHandler);
+            JsonNode node = MsgJsonMapper.getObjectMapper().readTree(json);
+            if (1 == node.get("code").asInt()) {
+                urlStr = node.get("data").get("streamUrl").asText();
+            } else {
+                failedReason = "NOT FOUND streamUrl";
             }
         } catch (Exception e) {
             failedReason = e.toString();
@@ -114,7 +116,7 @@ public class RadioStation {
 
         if (failedReason != null) {
             if (prevRunner == refreshMediaUrlRunnerFuture) {
-                log.warn("{} get MediaUrl failed from {} with {}", name, webUrl, failedReason);
+                log.warn("{} get MediaUrl failed from {} {} with {}", name, STREAM_URL, streamId, failedReason);
                 stopRunner(refreshMediaStreamRunnerFuture, REFRESH_MEDIA_STREAM);
                 refreshMediaStreamRunnerFuture = null;
                 // retry after 1 seconds
@@ -126,21 +128,13 @@ public class RadioStation {
             return;
         }
 
-        String urlStr = matcher.group(1);
-        String protocol = "http";
-        try {
-            URL url = new URL(webUrl);
-            protocol = url.getProtocol();
-        } catch (Exception e) {
-            //do nothing
-        }
         if (urlStr.startsWith("//")) {
-            urlStr = String.format("%s:%s", protocol, urlStr);
+            urlStr = String.format("https:%s", urlStr);
         } else {
-            urlStr = String.format("%s://%s", protocol, urlStr);
+            urlStr = String.format("https://%s", urlStr);
         }
         mediaUrl = urlStr;
-        log.info("{} get MediaUrl={} success from {}", name, mediaUrl, webUrl);
+        log.info("{} get MediaUrl={} success from {} {}", name, mediaUrl, STREAM_URL, streamId);
 
         int ttl = 1200;
         long t = System.currentTimeMillis() / 1000;
